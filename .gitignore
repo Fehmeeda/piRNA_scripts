@@ -1,6 +1,9 @@
-# Ignore EVERYTHING except Scripts
+# Ignore everything
 *
+
+# BUT keep Scripts folder
 !Scripts/
+!Scripts/**
 !README.md
 !.gitignore
 

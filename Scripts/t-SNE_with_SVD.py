@@ -1,0 +1,57 @@
+import numpy as np
+from sklearn.manifold import TSNE
+from sklearn.decomposition import TruncatedSVD
+import matplotlib.pyplot as plt
+
+# =============================
+# List the files you want to load
+# =============================
+species_files = {
+    "Human": "Human/Human_kmer_onehot_overlapping.npz",
+    "Mouse": "Mouse/Mouse_kmer_onehot_overlapping.npz",
+    "Drosophila": "Drosophila/Drosophila_kmer_onehot_overlapping.npz"
+}
+
+# =============================
+# Process each species separately
+# =============================
+for species, file_path in species_files.items():
+    print(f"\n=== Processing {species} ===")
+    
+    # Load data
+    data = np.load(file_path, allow_pickle=True)
+    X = data['X']   # shape: (num_sequences, 125, kmer)
+    y = data['y']
+    
+    print(f"Loaded {species}: X={X.shape}, y={y.shape}")
+
+    # Flatten one-hot matrices
+    X_flat = np.array([x.flatten() for x in X])
+    print(f"Flattened shape: {X_flat.shape}")
+
+    # =============================
+    # Apply TruncatedSVD (recommended)
+    # =============================
+    print("Running TruncatedSVD (dim=50) ...")
+    svd = TruncatedSVD(n_components=50, random_state=42)
+    X_reduced = svd.fit_transform(X_flat)
+    print("Reduced shape:", X_reduced.shape)
+
+    # =============================
+    # Run t-SNE on reduced data
+    # =============================
+    print("Running t-SNE...")
+    tsne = TSNE(n_components=2)
+    X_tsne = tsne.fit_transform(X_reduced)
+
+    # =============================
+    # Plot
+    # =============================
+    plt.figure(figsize=(8,6))
+    plt.scatter(X_tsne[y==1, 0], X_tsne[y==1, 1], c='blue', label='Positive', alpha=0.6)
+    plt.scatter(X_tsne[y==0, 0], X_tsne[y==0, 1], c='red', label='Negative', alpha=0.6)
+    plt.title(f"t-SNE (TruncatedSVD → t-SNE) — {species}")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(f"{species}/tSNE_onehot_overlapping_withSVD_{species}.png")
+    plt.show()
