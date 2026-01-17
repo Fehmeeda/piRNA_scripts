@@ -5,7 +5,7 @@ import os
 import random
 from PIL import Image
 from pirna import pad_sequences,read_fasta_txt, get_kmers
-
+# =============================
 # =============================
 # Step 3: Generate 85 valid kmers
 # =============================

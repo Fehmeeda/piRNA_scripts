@@ -3,7 +3,6 @@ import numpy as np
 import plotly.graph_objects as go
 from collections import Counter
 import os
-
 # =============================
 # CONFIG
 # =============================
