@@ -222,11 +222,20 @@ for species, files in SPECIES_FILES.items():
         f.write(report)
 
     # ---- Confusion matrix ----
+
     cm = confusion_matrix(y_test, y_pred)
     plt.figure()
     plt.imshow(cm, cmap="Blues")
     plt.title(f"{species} SVM Confusion Matrix")
+    plt.xlabel("Predicted")
+    plt.ylabel("True")
     plt.colorbar()
+
+    for i in range(2):
+        for j in range(2):
+            plt.text(j, i, cm[i, j], ha="center", va="center")
+
+    plt.tight_layout()
     plt.savefig(os.path.join(outdir, "confusion_matrix.png"))
     plt.close()
 
