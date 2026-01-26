@@ -4,87 +4,104 @@ import numpy as np
 from sklearn.model_selection import StratifiedKFold
 
 
-def read_fasta_txt(file_path):
+# =============================
+# FASTA reader (preserve IDs)
+# =============================
+def read_fasta_with_ids(file_path, label):
     sequences = []
+    labels = []
+    ids = []
+
+    curr_id = None
+
     with open(file_path) as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
+
             if line.startswith(">"):
-                continue
-            sequences.append(line.upper())
-    return sequences
+                curr_id = line[1:]   # EXACT ID
+            else:
+                sequences.append(line.upper())
+                labels.append(label)
+                ids.append(curr_id)
+
+    return sequences, labels, ids
 
 
-def load_sequences(pos_file, neg_file):
-    pos_seqs = read_fasta_txt(pos_file)
-    neg_seqs = read_fasta_txt(neg_file)
+# =============================
+# Load dataset
+# =============================
+def load_sequences_with_ids(pos_file, neg_file):
+    X, y, ids = [], [], []
 
-    X = np.array(pos_seqs + neg_seqs)
-    y = np.array([1] * len(pos_seqs) + [0] * len(neg_seqs))
+    pos_X, pos_y, pos_ids = read_fasta_with_ids(pos_file, 1)
+    neg_X, neg_y, neg_ids = read_fasta_with_ids(neg_file, 0)
 
-    print(f"Loaded {len(pos_seqs)} positive samples")
-    print(f"Loaded {len(neg_seqs)} negative samples")
+    X.extend(pos_X)
+    X.extend(neg_X)
 
-    return X, y
+    y.extend(pos_y)
+    y.extend(neg_y)
+
+    ids.extend(pos_ids)
+    ids.extend(neg_ids)
+
+    return np.array(X), np.array(y), np.array(ids)
 
 
-def save_fold_txt(X, y, train_idx, test_idx, out_dir):
+# =============================
+# Save FASTA fold
+# =============================
+def save_fold_fasta(X, y, ids, idx, label, out_file):
+    with open(out_file, "w") as f:
+        for i in idx:
+            if y[i] == label:
+                f.write(f">{ids[i]}\n")
+                f.write(X[i] + "\n")
+
+
+# =============================
+# Create CV
+# =============================
+def create_5fold_cv(X, y, ids, out_dir, seed=42):
     os.makedirs(out_dir, exist_ok=True)
 
-    def write(fname, idx, label):
-        with open(fname, "w") as f:
-            for i in idx:
-                if y[i] == label:
-                    f.write(X[i] + "\n")
-
-    write(os.path.join(out_dir, "train_pos.txt"), train_idx, 1)
-    write(os.path.join(out_dir, "train_neg.txt"), train_idx, 0)
-    write(os.path.join(out_dir, "test_pos.txt"),  test_idx, 1)
-    write(os.path.join(out_dir, "test_neg.txt"),  test_idx, 0)
-
-
-def create_5fold_cv(X, y, out_dir, seed=42):
-    os.makedirs(out_dir, exist_ok=True)
-
-    skf = StratifiedKFold(
-        n_splits=5,
-        shuffle=True,
-        random_state=seed
-    )
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
 
     for fold, (train_idx, test_idx) in enumerate(skf.split(X, y)):
-        # 1️⃣ Save indices (for reproducibility)
+        fold_dir = os.path.join(out_dir, f"fold{fold}")
+        os.makedirs(fold_dir, exist_ok=True)
+
+        # Save PKL (exact IDs)
         fold_data = {
             "train_idx": train_idx,
-            "test_idx": test_idx
+            "test_idx": test_idx,
+            "train_ids": ids[train_idx],
+            "test_ids": ids[test_idx]
         }
 
         with open(os.path.join(out_dir, f"fold{fold}.pkl"), "wb") as f:
             pickle.dump(fold_data, f)
 
-        # 2️⃣ Save sequences (for models)
-        fold_txt_dir = os.path.join(out_dir, f"fold{fold}")
-        save_fold_txt(X, y, train_idx, test_idx, fold_txt_dir)
+        # Save FASTA
+        save_fold_fasta(X, y, ids, train_idx, 1, f"{fold_dir}/train_pos.txt")
+        save_fold_fasta(X, y, ids, train_idx, 0, f"{fold_dir}/train_neg.txt")
+        save_fold_fasta(X, y, ids, test_idx,  1, f"{fold_dir}/test_pos.txt")
+        save_fold_fasta(X, y, ids, test_idx,  0, f"{fold_dir}/test_neg.txt")
 
-        print(
-            f"Fold {fold}: "
-            f"train={len(train_idx)} "
-            f"test={len(test_idx)} "
-            f"(pos={y[test_idx].sum()}, "
-            f"neg={len(test_idx) - y[test_idx].sum()})"
-        )
+        print(f"Fold {fold} done")
 
-    print("\n✅ 5-fold CV splits saved as PKL + TXT in:", out_dir)
+    print("\n✅ CV saved with ORIGINAL IDs")
 
 
 # =============================
 # RUN
 # =============================
-pos_file = "Datasets/Human_posi_samples.txt"
-neg_file = "Datasets/Human_nega_samples.txt"
-out_dir  = "Splits/Human"
+pos_file = "Datasets/Drosophila_posi_samples.txt"
+neg_file = "Datasets/Drosophila_nega_samples.txt"
+out_dir  = "Splits/Drosophila"
 
-X, y = load_sequences(pos_file, neg_file)
-create_5fold_cv(X, y, out_dir)
+X, y, ids = load_sequences_with_ids(pos_file, neg_file)
+create_5fold_cv(X, y, ids, out_dir)
