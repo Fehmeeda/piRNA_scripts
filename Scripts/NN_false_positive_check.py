@@ -182,7 +182,7 @@ plt.close()
 print("✅ FP position-specific k-mer analysis completed")
 print("📁 Results saved in:", OUTDIR)
 '''
-
+'''
 import os
 import itertools
 import numpy as np
@@ -211,11 +211,11 @@ os.makedirs(OUT_DIR, exist_ok=True)
 # =============================
 # FILES
 # =============================
-'''X_FILE = "Human_X_kmer_prob.npy"
+X_FILE = "Human_X_kmer_prob.npy"
 Y_FILE = "Human_y.npy"
 
 POS_SEQ_FILE = "Datasets/Human_posi_samples.txt"
-NEG_SEQ_FILE = "Datasets/Human_nega_samples.txt"'''
+NEG_SEQ_FILE = "Datasets/Human_nega_samples.txt"
 # =============================
 # FILES PER SPECIES
 # =============================
@@ -328,6 +328,7 @@ def plot_histogram(matrix, title, outfile):
 # =============================
 # MAIN
 # =============================
+'''
 '''def main():
 
     # ---- Load sequences ----
@@ -440,7 +441,7 @@ def plot_histogram(matrix, title, outfile):
     )
 
     print("\n✔ FP position-specific k-mer analysis completed")
-'''
+
 def main():
 
     for species, files in SPECIES_FILES.items():
@@ -583,6 +584,288 @@ def save_kmer_position_table(matrix, kmers, outfile):
     df.to_csv(outfile)
     print(f"✅ Saved frequency table: {outfile}")
     return df
+
+# =============================
+if __name__ == "__main__":
+    main()'''
+
+import os
+import itertools
+import numpy as np
+import plotly.graph_objects as go
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import (
+    classification_report,
+    roc_auc_score,
+    confusion_matrix,
+    roc_curve
+)
+
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping
+
+# =============================
+# CONFIG
+# =============================
+K = 3
+ALPHABET = ["A", "C", "G", "T"]
+THRESHOLD = 0.5
+
+OUT_DIR = "NN_FP_FN_POSITION_KMER"
+os.makedirs(OUT_DIR, exist_ok=True)
+
+# =============================
+# FILES PER SPECIES
+# =============================
+SPECIES_FILES = {
+    "Human": {
+        "X": "Human_X_kmer_prob.npy",
+        "y": "Human_y.npy",
+        "pos": "Datasets/Human_posi_samples.txt",
+        "neg": "Datasets/Human_nega_samples.txt",
+    },
+    "Mouse": {
+        "X": "Mouse_X_kmer_prob.npy",
+        "y": "Mouse_y.npy",
+        "pos": "Datasets/Mouse_posi_samples.txt",
+        "neg": "Datasets/Mouse_nega_samples.txt",
+    },
+    "Drosophila": {
+        "X": "Drosophila_X_kmer_prob.npy",
+        "y": "Drosophila_y.npy",
+        "pos": "Datasets/Drosophila_posi_samples.txt",
+        "neg": "Datasets/Drosophila_nega_samples.txt",
+    }
+}
+
+# =============================
+# FASTA / TXT READER
+# =============================
+def read_fasta_or_txt(filepath):
+    sequences = []
+    seq = ""
+    with open(filepath) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith(">"):
+                if seq:
+                    sequences.append(seq.upper())
+                    seq = ""
+            else:
+                seq += line
+        if seq:
+            sequences.append(seq.upper())
+    return np.array(sequences)
+
+# =============================
+# KMER SETUP
+# =============================
+KMERS = ["".join(p) for p in itertools.product(ALPHABET, repeat=K)]
+KMER_TO_IDX = {k: i for i, k in enumerate(KMERS)}
+
+# =============================
+# POSITION-SPECIFIC KMER
+# =============================
+def kmer_freq_overlap_trim(sequences, target_len):
+    positions = target_len - K + 1
+    mat = np.zeros((positions, len(KMERS)), dtype=np.int32)
+
+    for seq in sequences:
+        seq = seq[:target_len]
+        for i in range(positions):
+            kmer = seq[i:i+K]
+            if set(kmer) <= set(ALPHABET):
+                mat[i, KMER_TO_IDX[kmer]] += 1
+    return mat
+
+def kmer_freq_disjoint_trim(sequences, target_len):
+    positions = target_len // K
+    mat = np.zeros((positions, len(KMERS)), dtype=np.int32)
+
+    for seq in sequences:
+        seq = seq[:target_len]
+        for i in range(positions):
+            kmer = seq[i*K:(i+1)*K]
+            if set(kmer) <= set(ALPHABET):
+                mat[i, KMER_TO_IDX[kmer]] += 1
+    return mat
+
+# =============================
+# SAVE KMER TABLE
+# =============================
+def save_kmer_position_table(matrix, kmers, outfile):
+    table = matrix.T
+    df = pd.DataFrame(
+        table,
+        index=kmers,
+        columns=[f"pos_{i}" for i in range(table.shape[1])]
+    )
+    df.to_csv(outfile)
+    print(f"✅ Saved: {outfile}")
+
+# =============================
+# STACKED HISTOGRAM
+# =============================
+def plot_histogram(matrix, title, outfile):
+    fig = go.Figure()
+    for i, kmer in enumerate(KMERS):
+        fig.add_bar(
+            x=list(range(matrix.shape[0])),
+            y=matrix[:, i],
+            name=kmer
+        )
+    fig.update_layout(
+        title=title,
+        xaxis_title="Position",
+        yaxis_title="Frequency",
+        barmode="stack",
+        height=700
+    )
+    fig.write_html(outfile)
+
+# =============================
+# MAIN
+# =============================
+def main():
+
+    for species, files in SPECIES_FILES.items():
+
+        print(f"\n🧬 ===== Processing {species} =====")
+
+        outdir = os.path.join(OUT_DIR, species)
+        os.makedirs(outdir, exist_ok=True)
+
+        # ---- Load data ----
+        X = np.load(files["X"])
+        y = np.load(files["y"])
+
+        pos_seqs = read_fasta_or_txt(files["pos"])
+        neg_seqs = read_fasta_or_txt(files["neg"])
+        sequences = np.concatenate([pos_seqs, neg_seqs])
+
+        # ---- Split ----
+        X_train, X_test, y_train, y_test, seq_train, seq_test = train_test_split(
+            X, y, sequences,
+            test_size=0.2,
+            random_state=42,
+            stratify=y
+        )
+
+        # ---- Scale ----
+        scaler = StandardScaler()
+        X_train = scaler.fit_transform(X_train)
+        X_test = scaler.transform(X_test)
+
+        # ---- Model ----
+        model = Sequential([
+            Dense(32, activation="relu", input_shape=(X_train.shape[1],)),
+            Dropout(0.3),
+            Dense(16, activation="relu"),
+            Dropout(0.3),
+            Dense(1, activation="sigmoid")
+        ])
+
+        model.compile(
+            optimizer=Adam(learning_rate=0.001),
+            loss="binary_crossentropy",
+            metrics=["accuracy"]
+        )
+
+        early_stop = EarlyStopping(
+            monitor="val_loss",
+            patience=5,
+            restore_best_weights=True
+        )
+
+        model.fit(
+            X_train,
+            y_train,
+            epochs=20,
+            batch_size=32,
+            validation_split=0.2,
+            callbacks=[early_stop],
+            verbose=0
+        )
+
+        # ---- Predict ----
+        y_prob = model.predict(X_test).ravel()
+        y_pred = (y_prob >= THRESHOLD).astype(int)
+
+        print(classification_report(y_test, y_pred))
+        print("ROC-AUC:", roc_auc_score(y_test, y_prob))
+
+        # =============================
+        # CONFUSION MATRIX (LABELED)
+        # =============================
+        cm = confusion_matrix(y_test, y_pred)
+
+        plt.figure(figsize=(5,5))
+        plt.imshow(cm, cmap="Blues")
+
+        plt.xticks([0,1], ["Predicted non-piRNA", "Predicted piRNA"])
+        plt.yticks([0,1], ["True non-piRNA", "True piRNA"])
+
+        labels = [["TN", "FP"], ["FN", "TP"]]
+        for i in range(2):
+            for j in range(2):
+                plt.text(j, i, f"{labels[i][j]}\n{cm[i,j]}",
+                         ha="center", va="center", fontsize=12)
+
+        plt.title(f"{species} NN Confusion Matrix")
+        plt.tight_layout()
+        plt.savefig(os.path.join(outdir, "confusion_matrix.png"), dpi=300)
+        plt.close()
+
+        # =============================
+        # FP & FN ANALYSIS
+        # =============================
+        for label, mask in {
+            "FP": (y_test == 0) & (y_pred == 1),
+            "FN": (y_test == 1) & (y_pred == 0)
+        }.items():
+
+            seqs = seq_test[mask]
+            print(f"{label} count: {len(seqs)}")
+
+            if len(seqs) == 0:
+                continue
+
+            min_len = min(len(s) for s in seqs)
+
+            overlap = kmer_freq_overlap_trim(seqs, min_len)
+            disjoint = kmer_freq_disjoint_trim(seqs, min_len)
+
+            save_kmer_position_table(
+                overlap, KMERS,
+                f"{outdir}/{label}_overlap_trim_{min_len}.csv"
+            )
+            save_kmer_position_table(
+                disjoint, KMERS,
+                f"{outdir}/{label}_disjoint_trim_{min_len}.csv"
+            )
+
+            plot_histogram(
+                overlap,
+                f"{species} {label} Overlap {K}-mer",
+                f"{outdir}/{label}_overlap.html"
+            )
+            plot_histogram(
+                disjoint,
+                f"{species} {label} Disjoint {K}-mer",
+                f"{outdir}/{label}_disjoint.html"
+            )
+
+        print(f"✔ Finished {species}")
+
+    print("\n🎯 ALL SPECIES COMPLETED")
 
 # =============================
 if __name__ == "__main__":
