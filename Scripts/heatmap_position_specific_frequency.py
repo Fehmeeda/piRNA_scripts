@@ -7,6 +7,10 @@ import os
 # ============================================================
 # CONFIGURATION
 # ============================================================
+GROUP_COLORS = {
+    "POS": "#d62728",  # red
+    "NEG": "#1f77b4"   # blue
+}
 
 BASE_DIR = "output_position_kmer_frequency"
 
@@ -57,7 +61,6 @@ def load_and_normalize(csv_file, kmer_order):
 # ============================================================
 # HEATMAP 1: POSITION-WISE (POS TOP, NEG BOTTOM)
 # ============================================================
-
 def plot_position_heatmap(pos, neg, species, mode):
     pos_l = pos.copy()
     pos_l.index = pos_l.index + "_POS"
@@ -67,55 +70,37 @@ def plot_position_heatmap(pos, neg, species, mode):
 
     combined = pd.concat([pos_l, neg_l], axis=0)
 
-    plt.figure(figsize=(10, 18))
-    ax = sns.heatmap(
+    # ----- row color annotation -----
+    row_colors = [
+        GROUP_COLORS["POS"] if "_POS" in idx else GROUP_COLORS["NEG"]
+        for idx in combined.index
+    ]
+
+    g = sns.clustermap(
         combined,
         cmap="viridis",
-        yticklabels=True,
-        annot=False   # set True if your professor wants numbers
+        row_cluster=False,
+        col_cluster=False,
+        row_colors=row_colors,
+        figsize=(10, 18)
     )
 
-    # ----- separator line between POS and NEG -----
-    ax.hlines(
-        y=len(pos),
-        xmin=0,
-        xmax=combined.shape[1],
-        colors="white",
-        linewidth=2
-    )
-
-    # ----- group annotations -----
-    ax.text(
-        combined.shape[1] + 0.5,
-        len(pos) / 2,
-        "POS",
-        va="center",
-        fontsize=12,
-        fontweight="bold"
-    )
-    ax.text(
-        combined.shape[1] + 0.5,
-        len(pos) + len(neg) / 2,
-        "NEG",
-        va="center",
-        fontsize=12,
-        fontweight="bold"
-    )
-
-    plt.title(
+    g.fig.suptitle(
         f"{species} ({mode})\n"
         "Position-Specific K-mer Frequency\n"
-        "Column → Row Normalized"
+        "Column → Row Normalized",
+        y=1.02
     )
-    plt.xlabel("Position")
-    plt.ylabel("K-mer")
 
-    plt.tight_layout()
-    plt.savefig(
+    g.ax_heatmap.set_xlabel("Position")
+    g.ax_heatmap.set_ylabel("K-mer")
+
+    g.savefig(
         f"{FIG_DIR}/{species}_{mode}_position_comparison.png",
         dpi=300
     )
     plt.close()
+
 
 def plot_kmer_heatmap(pos, neg, species, mode):
     pos = pos.loc[KMER_ORDER]
