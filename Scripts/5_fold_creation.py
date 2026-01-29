@@ -3,140 +3,88 @@ import pickle
 import numpy as np
 from sklearn.model_selection import StratifiedKFold
 
-# =============================
-# FASTA reader (preserve IDs)
-# =============================
-def read_fasta_with_ids(file_path, label):
+
+def read_fasta_txt(file_path):
     sequences = []
-    labels = []
-    ids = []
-
-    curr_id = None
-
     with open(file_path) as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
-
             if line.startswith(">"):
-                curr_id = line[1:]
-            else:
-                sequences.append(line.upper())
-                labels.append(label)
-                ids.append(curr_id)
-
-    return sequences, labels, ids
+                continue
+            sequences.append(line.upper())
+    return sequences
 
 
-# =============================
-# Load dataset
-# =============================
-def load_sequences_with_ids(pos_file, neg_file):
-    X, y, ids = [], [], []
+def load_sequences(pos_file, neg_file):
+    pos_seqs = read_fasta_txt(pos_file)
+    neg_seqs = read_fasta_txt(neg_file)
 
-    pos_X, pos_y, pos_ids = read_fasta_with_ids(pos_file, 1)
-    neg_X, neg_y, neg_ids = read_fasta_with_ids(neg_file, 0)
+    X = np.array(pos_seqs + neg_seqs)
+    y = np.array([1] * len(pos_seqs) + [0] * len(neg_seqs))
 
-    X.extend(pos_X)
-    X.extend(neg_X)
+    print(f"Loaded {len(pos_seqs)} positive samples")
+    print(f"Loaded {len(neg_seqs)} negative samples")
 
-    y.extend(pos_y)
-    y.extend(neg_y)
-
-    ids.extend(pos_ids)
-    ids.extend(neg_ids)
-
-    return np.array(X), np.array(y), np.array(ids)
+    return X, y
 
 
-# =============================
-# Balance indices
-# =============================
-def balance_indices(idx, y, seed):
-    pos_idx = idx[y[idx] == 1]
-    neg_idx = idx[y[idx] == 0]
-
-    n = min(len(pos_idx), len(neg_idx))
-
-    rng = np.random.default_rng(seed)
-    pos_idx = rng.choice(pos_idx, n, replace=False)
-    neg_idx = rng.choice(neg_idx, n, replace=False)
-
-    balanced_idx = np.concatenate([pos_idx, neg_idx])
-    rng.shuffle(balanced_idx)
-
-    return balanced_idx
-
-
-# =============================
-# Save FASTA fold
-# =============================
-def save_fold_fasta(X, y, ids, idx, label, out_file):
-    with open(out_file, "w") as f:
-        for i in idx:
-            if y[i] == label:
-                f.write(f">{ids[i]}\n")
-                f.write(X[i] + "\n")
-
-
-# =============================
-# Create 5-fold CV (balanced)
-# =============================
-def create_5fold_cv(X, y, ids, out_dir, seed=42):
+def save_fold_txt(X, y, train_idx, test_idx, out_dir):
     os.makedirs(out_dir, exist_ok=True)
 
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
+    def write(fname, idx, label):
+        with open(fname, "w") as f:
+            for i in idx:
+                if y[i] == label:
+                    f.write(X[i] + "\n")
+
+    write(os.path.join(out_dir, "train_pos.txt"), train_idx, 1)
+    write(os.path.join(out_dir, "train_neg.txt"), train_idx, 0)
+    write(os.path.join(out_dir, "test_pos.txt"),  test_idx, 1)
+    write(os.path.join(out_dir, "test_neg.txt"),  test_idx, 0)
+
+
+def create_5fold_cv(X, y, out_dir, seed=42):
+    os.makedirs(out_dir, exist_ok=True)
+
+    skf = StratifiedKFold(
+        n_splits=5,
+        shuffle=True,
+        random_state=seed
+    )
 
     for fold, (train_idx, test_idx) in enumerate(skf.split(X, y)):
-
-        # 🔒 Balance train and test separately
-        train_idx = balance_indices(train_idx, y, seed + fold)
-        test_idx  = balance_indices(test_idx,  y, seed + fold)
-
-        fold_dir = os.path.join(out_dir, f"fold{fold}")
-        os.makedirs(fold_dir, exist_ok=True)
-
-        # Save PKL (exact IDs)
+        # 1️⃣ Save indices (for reproducibility)
         fold_data = {
             "train_idx": train_idx,
-            "test_idx": test_idx,
-            "train_ids": ids[train_idx],
-            "test_ids": ids[test_idx]
+            "test_idx": test_idx
         }
 
         with open(os.path.join(out_dir, f"fold{fold}.pkl"), "wb") as f:
             pickle.dump(fold_data, f)
 
-        # Save FASTA files
-        save_fold_fasta(X, y, ids, train_idx, 1, f"{fold_dir}/train_pos.txt")
-        save_fold_fasta(X, y, ids, train_idx, 0, f"{fold_dir}/train_neg.txt")
-        save_fold_fasta(X, y, ids, test_idx,  1, f"{fold_dir}/test_pos.txt")
-        save_fold_fasta(X, y, ids, test_idx,  0, f"{fold_dir}/test_neg.txt")
-
-        # Sanity check
-        tr_pos = np.sum(y[train_idx] == 1)
-        tr_neg = np.sum(y[train_idx] == 0)
-        te_pos = np.sum(y[test_idx] == 1)
-        te_neg = np.sum(y[test_idx] == 0)
+        # 2️⃣ Save sequences (for models)
+        fold_txt_dir = os.path.join(out_dir, f"fold{fold}")
+        save_fold_txt(X, y, train_idx, test_idx, fold_txt_dir)
 
         print(
-            f"Fold {fold} | "
-            f"Train: {tr_pos} pos / {tr_neg} neg | "
-            f"Test: {te_pos} pos / {te_neg} neg"
+            f"Fold {fold}: "
+            f"train={len(train_idx)} "
+            f"test={len(test_idx)} "
+            f"(pos={y[test_idx].sum()}, "
+            f"neg={len(test_idx) - y[test_idx].sum()})"
         )
 
-    print("\n✅ CV saved with ORIGINAL IDs and PERFECT class balance per fold")
+    print("\n✅ 5-fold CV splits saved as PKL + TXT in:", out_dir)
 
 
 # =============================
-# RUN (species-wise)
+# RUN
 # =============================
-if __name__ == "__main__":
+pos_file = "Datasets/Human_posi_samples.txt"
+neg_file = "Datasets/Human_nega_samples.txt"
+out_dir  = "Splits/Human"
 
-    pos_file = "Datasets/Human_posi_samples.txt"
-    neg_file = "Datasets/Human_nega_samples.txt"
-    out_dir  = "Splits/Human"
-
-    X, y, ids = load_sequences_with_ids(pos_file, neg_file)
-    create_5fold_cv(X, y, ids, out_dir)
+X, y = load_sequences(pos_file, neg_file)
+create_5fold_cv(X, y, out_dir)
