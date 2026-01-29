@@ -23,7 +23,7 @@ import os
 # CONFIG
 # ============================================================
 BATCH_SIZE = 32
-EPOCHS = 20
+EPOCHS = 30
 LR = 1e-4
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 K = 3
@@ -41,7 +41,7 @@ def get_overlapping_kmers(seq, k=3):
     return kmers
 
 #If i just remove the N, it will not include any of the Kmers with N in the combination (all kmers product)
-def generate_valid_kmers(k=3, alphabet="ACGT"):
+def generate_valid_kmers(k=3, alphabet="ACGTN"):
     all_kmers = ["".join(p) for p in product(alphabet, repeat=k)]
     valid = []
 
@@ -131,8 +131,6 @@ def encode_sequences(pos_file, neg_file, kmer_to_index, max_len):
         else:
             seq = seq[:max_len]
         
-        
-
         kmers = get_overlapping_kmers(seq, K)
         X.append(weighted_one_hot_kmers(kmers, kmer_to_index))
         y.append(1 if sid in pos else 0)
@@ -145,7 +143,7 @@ def encode_sequences(pos_file, neg_file, kmer_to_index, max_len):
 # ============================================================
 class KmerDataset(Dataset):
     def __init__(self, X, y):
-        self.X = torch.tensor(X, dtype=torch.float32)
+        self.X = torch.tensor(X, dtype=torch.float32).unsqueeze(1)
         self.y = torch.tensor(y, dtype=torch.long)
 
     def __len__(self):
@@ -154,22 +152,22 @@ class KmerDataset(Dataset):
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx]
 
-'''def get_model_architecture(input_shape):
-    model = KmerCNN(input_shape)
-    return str(model)'''
 def get_model_architecture(input_shape):
+    model = KmerCNN(input_shape)
+    return str(model)
+'''def get_model_architecture(input_shape):
     num_kmers, seq_len = input_shape
     model = KmerCNN(seq_len, num_kmers)
-    return str(model)
+    return str(model)'''
 
 # ============================================================
 # CNN MODEL
 # ============================================================
-'''class KmerCNN(nn.Module):
+class KmerCNN(nn.Module):
     def __init__(self, input_shape):
         super().__init__()
 
-        self.conv1 = nn.Conv2d(1, 32, (5,3))
+        self.conv1 = nn.Conv2d(1, 32, (5,3), padding=(2,1))
         self.conv2 = nn.Conv2d(32, 64, 3, padding=1)
         self.pool = nn.MaxPool2d(2)
         self.dropout = nn.Dropout(0.5)
@@ -190,15 +188,15 @@ def get_model_architecture(input_shape):
         x = torch.flatten(x, 1)
         x = self.dropout(F.relu(self.fc1(x)))
         return self.fc2(x)
-'''
-class KmerCNN(nn.Module):
+
+'''class KmerCNN(nn.Module):
     def __init__(self, seq_len, num_kmers):
         super().__init__()
 
         self.conv1 = nn.Conv1d(
             in_channels=num_kmers,
             out_channels=32,
-            kernel_size=5,
+            kernel_size=7,
             padding=2
         )
 
@@ -211,15 +209,22 @@ class KmerCNN(nn.Module):
 
         self.pool = nn.MaxPool1d(2)
         self.relu = nn.ReLU()
+        #self.dropout = nn.Dropout(0.3)
+        # infer size automatically
+        with torch.no_grad():
+            dummy = torch.zeros(1, num_kmers, seq_len)
+            dummy = self.pool(self.relu(self.conv1(dummy)))
+            dummy = self.relu(self.conv2(dummy))
+            fc_in = dummy.numel()
 
-        self.fc = nn.Linear((seq_len // 2) * 64, 2)
+        self.fc = nn.Linear(fc_in, 2)
 
     def forward(self, x):
         # x: B × num_kmers × positions
         x = self.pool(self.relu(self.conv1(x)))
         x = self.relu(self.conv2(x))
         x = x.flatten(1)
-        return self.fc(x)
+        return self.fc(x)'''
 
 # ============================================================
 # TRAIN / EVAL
@@ -274,11 +279,12 @@ def train_and_eval(train_X, train_y, test_X, test_y):
     print("Val:  ", np.bincount(y_val))
     print(f"Train samples: {len(y_tr)}, Val samples: {len(y_val)}, Test samples: {len(test_y)}")
 
-    num_kmers = train_X.shape[1]
-    seq_len   = train_X.shape[2]
-    print(f"Number of kmers: {num_kmers}, Sequence length: {seq_len}")
+    #num_kmers = train_X.shape[1]
+    #seq_len   = train_X.shape[2]
+    #print(f"Number of kmers: {num_kmers}, Sequence length: {seq_len}")
 
-    model = KmerCNN(seq_len, num_kmers).to(DEVICE)
+    #model = KmerCNN(seq_len, num_kmers).to(DEVICE)
+    model=KmerCNN(train_X.shape[1:]).to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=LR)
     crit = nn.CrossEntropyLoss()
 
