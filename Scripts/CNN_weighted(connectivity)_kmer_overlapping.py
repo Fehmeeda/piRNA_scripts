@@ -1,4 +1,3 @@
-
 # ============================================================
 # CNN with predefined folds + internal validation split
 # ============================================================
@@ -9,7 +8,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import (
+    accuracy_score,
+    roc_auc_score,
+    precision_score,
+    recall_score,
+    f1_score
+)
 from itertools import product
 from pirna import read_fasta_txt, pad_sequences
 import os
@@ -74,16 +79,38 @@ def weighted_one_hot_kmers(kmer_list, kmer_to_index, weights={0:1.0,1:0.5,2:0.25
 # ============================================================
 # DATA PREP
 # ============================================================
-def encode_sequences(pos_file, neg_file, kmer_to_index):
+'''def encode_sequences(pos_file, neg_file, kmer_to_index, max_len):
     pos = read_fasta_txt(pos_file)
     neg = read_fasta_txt(neg_file)
     all_seqs = {**pos, **neg}
+    print(f"Loaded {len(pos)} positive and {len(neg)} negative sequences.")
 
-    padded, _ = pad_sequences(all_seqs)
+    padded, _ = pad_sequences(all_seqs,max_len = max_len)
 
     X, y = [], []
 
     for sid, seq in padded.items():
+        kmers = get_overlapping_kmers(seq, K)
+        X.append(weighted_one_hot_kmers(kmers, kmer_to_index))
+        y.append(1 if sid in pos else 0)
+
+    return np.stack(X), np.array(y)'''
+def encode_sequences(pos_file, neg_file, kmer_to_index, max_len):
+    pos = read_fasta_txt(pos_file)
+    neg = read_fasta_txt(neg_file)
+    all_seqs = {**pos, **neg}
+
+    print(f"Loaded {len(pos)} positive and {len(neg)} negative sequences.")
+
+    X, y = [], []
+
+    for sid, seq in all_seqs.items():
+        # 🔒 FORCE padding here (no ambiguity)
+        if len(seq) < max_len:
+            seq = seq + "N" * (max_len - len(seq))
+        else:
+            seq = seq[:max_len]
+
         kmers = get_overlapping_kmers(seq, K)
         X.append(weighted_one_hot_kmers(kmers, kmer_to_index))
         y.append(1 if sid in pos else 0)
@@ -128,6 +155,7 @@ class KmerCNN(nn.Module):
         self.fc2 = nn.Linear(128, 2)
 
     def forward(self, x):
+
         x = self.pool(F.relu(self.conv1(x)))
         x = self.pool(F.relu(self.conv2(x)))
         x = torch.flatten(x, 1)
@@ -181,6 +209,27 @@ if __name__ == "__main__":
 
     valid_kmers = generate_valid_kmers(K)
     kmer_to_index = {k:i for i,k in enumerate(valid_kmers)}
+    
+    SPECIES_MAX_LEN = {}
+
+    for species in SPECIES:
+        lengths = []
+
+        for fold in FOLDS:
+            base = f"Splits/{species}/fold{fold}"
+        
+
+            for file in [
+                "train_pos.txt", "train_neg.txt",
+                "test_pos.txt",  "test_neg.txt"
+            ]:
+                seqs = read_fasta_txt(f"{base}/{file}")
+                lengths.extend(len(s) for s in seqs.values())
+
+        SPECIES_MAX_LEN[species] = max(lengths)
+        max_len = SPECIES_MAX_LEN[species]
+        print(f"{species} max length = {SPECIES_MAX_LEN[species]}")
+
 
     for species in SPECIES:
         print(f"\n===== {species} =====")
@@ -191,12 +240,13 @@ if __name__ == "__main__":
             print(f"\nFold {fold}")
 
             base = f"Splits/{species}/fold{fold}"
+            print(species)
 
             X_train, y_train = encode_sequences(
-                f"{base}/train_pos.txt", f"{base}/train_neg.txt", kmer_to_index
+                f"{base}/train_pos.txt", f"{base}/train_neg.txt", kmer_to_index, max_len
             )
             X_test, y_test = encode_sequences(
-                f"{base}/test_pos.txt", f"{base}/test_neg.txt", kmer_to_index
+                f"{base}/test_pos.txt", f"{base}/test_neg.txt", kmer_to_index, max_len
             )
 
             val_acc, test_acc = train_and_eval(X_train, y_train, X_test, y_test)
