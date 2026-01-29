@@ -24,7 +24,8 @@ import os
 # ============================================================
 BATCH_SIZE = 32
 EPOCHS = 30
-LR = 1e-4
+LR = 1e-3
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 K = 3
 FOLDS = range(5)
@@ -169,6 +170,7 @@ class KmerCNN(nn.Module):
 
         self.conv1 = nn.Conv2d(1, 32, (5,3), padding=(2,1))
         self.conv2 = nn.Conv2d(32, 64, 3, padding=1)
+        
         self.pool = nn.MaxPool2d(2)
         self.dropout = nn.Dropout(0.5)
 
