@@ -1,7 +1,7 @@
 import json, glob
 import numpy as np
 
-files = glob.glob("results_cnn_7/*.json")
+files = glob.glob("results_cnn/*.json")
 
 for species in ["Human","Mouse","Drosophila"]:
     accs = []

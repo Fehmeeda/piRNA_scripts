@@ -24,13 +24,14 @@ import os
 # ============================================================
 BATCH_SIZE = 32
 EPOCHS = 30
-LR = 1e-3
+LR = 1e-4
+DROPOUT=0.5
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 K = 3
-FOLDS = range(5)
+FOLDS = range(1)
 
-SPECIES = ["Human", "Mouse", "Drosophila"]
+SPECIES = ["Human"]
 
 # ============================================================
 # KMER FUNCTIONS
@@ -123,7 +124,7 @@ def encode_sequences(pos_file, neg_file, kmer_to_index, max_len):
 
     #print(f"Loaded {len(pos)} positive and {len(neg)} negative sequences.")
 
-    X, y = [], []
+    X, y , ids= [], [], []
 
     for sid, seq in all_seqs.items():
         # FORCE padding here 
@@ -135,8 +136,9 @@ def encode_sequences(pos_file, neg_file, kmer_to_index, max_len):
         kmers = get_overlapping_kmers(seq, K)
         X.append(weighted_one_hot_kmers(kmers, kmer_to_index))
         y.append(1 if sid in pos else 0)
+        ids.append(sid)
 
-    return np.stack(X), np.array(y)
+    return np.stack(X), np.array(y), np.array(ids)
 
 
 # ============================================================
@@ -170,14 +172,17 @@ class KmerCNN(nn.Module):
 
         self.conv1 = nn.Conv2d(1, 32, (5,3), padding=(2,1))
         self.conv2 = nn.Conv2d(32, 64, 3, padding=1)
+        self.bn1 = nn.BatchNorm2d(32)
+        self.bn2 = nn.BatchNorm2d(64)
+
         
         self.pool = nn.MaxPool2d(2)
-        self.dropout = nn.Dropout(0.5)
+        self.dropout = nn.Dropout(DROPOUT)
 
         with torch.no_grad():
             dummy = torch.zeros(1,1,*input_shape)
-            x = self.pool(F.relu(self.conv1(dummy)))
-            x = self.pool(F.relu(self.conv2(x)))
+            x = self.pool(F.relu(self.bn1(self.conv1(dummy))))
+            x = self.pool(F.relu(self.bn2(self.conv2(x))))
             self.flat = x.view(1,-1).shape[1]
 
         self.fc1 = nn.Linear(self.flat, 128)
@@ -185,9 +190,11 @@ class KmerCNN(nn.Module):
 
     def forward(self, x):
 
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
+        x = self.pool(F.relu(self.bn1(self.conv1(x))))
+        x = self.pool(F.relu(self.bn2(self.conv2(x))))
+
         x = torch.flatten(x, 1)
+        
         x = self.dropout(F.relu(self.fc1(x)))
         return self.fc2(x)
 
@@ -211,7 +218,7 @@ class KmerCNN(nn.Module):
 
         self.pool = nn.MaxPool1d(2)
         self.relu = nn.ReLU()
-        #self.dropout = nn.Dropout(0.3)
+        #self.dropout = nn.Dropout(DROPOUT)
         # infer size automatically
         with torch.no_grad():
             dummy = torch.zeros(1, num_kmers, seq_len)
@@ -266,10 +273,10 @@ class KmerCNN(nn.Module):
 
     return evaluate(val_loader), evaluate(test_loader)
 '''
-def train_and_eval(train_X, train_y, test_X, test_y):
+def train_and_eval(train_X, train_y, train_ids, test_X, test_y):
 
-    X_tr, X_val, y_tr, y_val = train_test_split(
-        train_X, train_y, test_size=0.2, stratify=train_y,random_state=42
+    X_tr, X_val, y_tr, y_val ,ids_tr, ids_val= train_test_split(
+        train_X, train_y, train_ids,test_size=0.2, stratify=train_y,random_state=42
     )
 
     train_loader = DataLoader(KmerDataset(X_tr, y_tr), BATCH_SIZE, shuffle=True)
@@ -279,6 +286,7 @@ def train_and_eval(train_X, train_y, test_X, test_y):
     print("Class distribution:")
     print("Train:", np.bincount(y_tr))
     print("Val:  ", np.bincount(y_val))
+
     print(f"Train samples: {len(y_tr)}, Val samples: {len(y_val)}, Test samples: {len(test_y)}")
 
     #num_kmers = train_X.shape[1]
@@ -334,10 +342,18 @@ def train_and_eval(train_X, train_y, test_X, test_y):
         if counter >= patience:
             print(f"Early stopping at epoch {epoch}")
             break
+        np.savetxt(f"{RESULTS_DIR}/{species}_fold{fold}_train_ids.txt",
+        ids_tr,
+        fmt="%s")
+
+        np.savetxt(
+            f"{RESULTS_DIR}/{species}_fold{fold}_val_ids.txt",
+            ids_val,
+            fmt="%s"
+        )
+
 
     model.load_state_dict(torch.load(f"{species}_model.pt"))
-
-
 
 
     # ===== METRIC EVALUATION =====
@@ -414,14 +430,14 @@ if __name__ == "__main__":
             base = f"Splits/{species}/fold{fold}"
             print(species)
 
-            X_train, y_train = encode_sequences(
+            X_train, y_train , train_ids = encode_sequences(
                 f"{base}/train_pos.txt", f"{base}/train_neg.txt", kmer_to_index, max_len
             )
-            X_test, y_test = encode_sequences(
+            X_test, y_test , test_ids= encode_sequences(
                 f"{base}/test_pos.txt", f"{base}/test_neg.txt", kmer_to_index, max_len
             )
 
-            val_metrics, test_metrics, train_losses, val_losses = train_and_eval(X_train, y_train, X_test, y_test)
+            val_metrics, test_metrics, train_losses, val_losses = train_and_eval(X_train, y_train, train_ids,X_test, y_test)
             import json
 
             run_result = {
@@ -435,7 +451,8 @@ if __name__ == "__main__":
                 "validation": val_metrics,
                 "test": test_metrics,
                 "train_loss": train_losses,
-                "val_loss": val_losses
+                "val_loss": val_losses,
+                "dropout": DROPOUT,
             }
 
             out_file = f"{RESULTS_DIR}/{species}_fold{fold}_K{K}_len{max_len}.json"
