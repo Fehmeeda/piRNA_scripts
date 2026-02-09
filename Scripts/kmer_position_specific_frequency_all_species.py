@@ -49,6 +49,8 @@ def read_fasta_or_txt(filepath):
 # =============================
 def majority_length(sequences):
     return Counter(len(s) for s in sequences).most_common(1)[0][0]
+def min_length(sequences):
+    return min(len(s) for s in sequences)
 
 # =============================
 # KMER LIST
@@ -199,10 +201,10 @@ def main():
         pos_seqs = read_fasta_or_txt(pos_file)
         neg_seqs = read_fasta_or_txt(neg_file)
 
-        pos_len = majority_length(pos_seqs)
-        neg_len = majority_length(neg_seqs)
+        pos_len = min_length(pos_seqs)
+        neg_len = min_length(neg_seqs)
         if species == "Drosophila":
-            print("  ⚠️ Aligning Drosophila POS length to NEG majority")
+            print("  ⚠️ Aligning Drosophila POS length to NEG min")
 
             target_len = neg_len   # use NEGATIVE as reference (20)
 
@@ -212,8 +214,8 @@ def main():
             pos_len = target_len   # force both to 20
             neg_len = target_len
 
-        print(f"  POS majority length: {pos_len}")
-        print(f"  NEG majority length: {neg_len}")
+        print(f"  POS min length: {pos_len}")
+        print(f"  NEG min length: {neg_len}")
 
         # ---------- OVERLAPPING ----------
         pos_ov, pos_used = kmer_freq_overlap(pos_seqs, pos_len)

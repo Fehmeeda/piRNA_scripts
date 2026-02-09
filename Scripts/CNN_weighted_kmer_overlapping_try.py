@@ -25,21 +25,35 @@ import os
 # ============================================================
 BATCH_SIZE = 32
 EPOCHS = 30
-LR = 1e-3
-DROPOUT=0.5
-
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-print(DEVICE)
+#LR = 1e-3
+#DROPOUT=0.3
+kmertype="overlap"
+DEVICE = "cpu"
 K = 3
+DECISION_TYPE='soft_llr'
+#hard or soft_llr
 FOLDS = range(5)
+PATIENCE=5
+MIN_DELTA=1e-5
+#WEIGHT_DECAY=1e-4
+
+PARAM_GRID = {
+    "lr": [1e-4, 1e-3, 1e-2, 1e-1,5e-4,5e-3,5e-2,5e-1,3e-4,3e-3,3e-2,3e-1],
+    "weight_decay": [0.0, 1e-2, 1e-4, 1e-3],
+    "dropout": [0.3, 0.4, 0.5],
+    "label_smoothing": [0.0, 0.05]
+}
+
 def load_species_probs(species):
     
+    
     base = f"output_position_kmer_probabilities"
-    pos = pd.read_csv(f"{base}/{species}_pos_overlap_prob.csv", index_col=0)
-    neg = pd.read_csv(f"{base}/{species}_neg_overlap_prob.csv", index_col=0)
+    pos = pd.read_csv(f"{base}/{species}_pos_{kmertype}_prob.csv", index_col=0)
+    neg = pd.read_csv(f"{base}/{species}_neg_{kmertype}_prob.csv", index_col=0)
+    
     return pos, neg
 
-SPECIES = ["Human","Mouse","Drosophila"]
+SPECIES = ["Drosophila"]
 
 # ============================================================
 # KMER FUNCTIONS
@@ -47,6 +61,12 @@ SPECIES = ["Human","Mouse","Drosophila"]
 def get_overlapping_kmers(seq, k=3):
     kmers = []
     for i in range(0, len(seq) - k + 1):
+        kmers.append(seq[i:i+k])
+    return kmers
+
+def get_disjoint_kmers(seq, k=3):
+    kmers = []
+    for i in range(0, len(seq) - k + 1, k):  # step = k
         kmers.append(seq[i:i+k])
     return kmers
 
@@ -69,8 +89,8 @@ def generate_valid_kmers(k=3, alphabet="ACGT"):
 
     return valid
 
-
-def weighted_one_hot_kmers(kmer_list, kmer_to_index, weights={0:1.0,1:0.5,2:0.25}):
+#Include N in alphabet
+'''def weighted_one_hot_kmers(kmer_list, kmer_to_index, weights={0:1.0,1:0.5,2:0.25}):
     mat = np.zeros((len(kmer_to_index), len(kmer_list)), dtype=np.float32)
 
     for i in range(len(kmer_list)):
@@ -84,8 +104,11 @@ def weighted_one_hot_kmers(kmer_list, kmer_to_index, weights={0:1.0,1:0.5,2:0.25
                 if idx is not None:
                     mat[idx, i] += w
     return mat
-
-'''def weighted_one_hot_kmers(kmer_list, kmer_to_index, weights={0:1.0,1:0.5,2:0.25}):
+'''
+#✅ Do NOT include N in alphabet
+#✅ Do NOT include N in kmer dictionary
+#✅ Skip kmers containing N
+def weighted_one_hot_kmers(kmer_list, kmer_to_index, weights={0:1.0,1:0.5,2:0.25}):
     mat = np.zeros((len(kmer_to_index), len(kmer_list)), dtype=np.float32)
 
     for i in range(len(kmer_list)):
@@ -103,76 +126,70 @@ def weighted_one_hot_kmers(kmer_list, kmer_to_index, weights={0:1.0,1:0.5,2:0.25
                     mat[idx, i] += w
 
     
-    return mat'''
+    return mat
 
 
 # ============================================================
 # DATA PREP
 # ============================================================
-'''def encode_sequences(pos_file, neg_file, kmer_to_index, max_len):
-    pos = read_fasta_txt(pos_file)
-    neg = read_fasta_txt(neg_file)
-    all_seqs = {**pos, **neg}
-    print(f"Loaded {len(pos)} positive and {len(neg)} negative sequences.")
 
-    padded, _ = pad_sequences(all_seqs,max_len = max_len)
-
-    X, y = [], []
-
-    for sid, seq in padded.items():
-        kmers = get_overlapping_kmers(seq, K)
-        X.append(weighted_one_hot_kmers(kmers, kmer_to_index))
-        y.append(1 if sid in pos else 0)
-
-    return np.stack(X), np.array(y)'''
-
-def hard_decision_vector(seq, pos_prob, neg_prob, k):
+def hard_decision_vector(seq, pos_prob, neg_prob, k, kmertype):
     L = len(seq)
+
+    if kmertype == "overlap":
+        step = 1
+    elif kmertype == "disjoint":
+        step = k
+    else:
+        raise ValueError("kmertype must be 'overlap' or 'disjoint'")
     
-    positions = L - k + 1
-    
+    positions = (L - k) // step + 1
+
     vec = np.zeros(positions, dtype=np.float32)
     #print(pos_prob)
 
-    for i in range(positions):
+    idx = 0
+    for i in range(0, L - k + 1, step):
+
         kmer = seq[i:i+k]
-        
+
         if kmer not in pos_prob.index:
-            
+            idx += 1
             continue
 
-        if pos_prob.loc[kmer, f"pos_{i}"] > neg_prob.loc[kmer, f"pos_{i}"]:
-            vec[i] = 1.0
+        if pos_prob.loc[kmer, f"pos_{idx}"] > neg_prob.loc[kmer, f"pos_{idx}"]:
+            vec[idx] = 1.0
 
+        idx += 1
         #print(f'pos0 and first kmer in posi:{pos_prob.loc['AAA','pos_0']}')
 
     '''s = vec.sum()
     if s > 0:
         vec /= s'''
     return vec
-def soft_decision_vector_llr(seq, pos_prob, neg_prob, k):
+def soft_decision_vector_llr(seq, pos_prob, neg_prob, k, kmertype):
     L = len(seq)
-    positions = L - k + 1
+    step = 1 if kmertype == "overlap" else k
+    positions = (L - k) // step + 1
 
     vec = np.zeros(positions, dtype=np.float32)
     eps = 1e-6
+    idx=0
 
-    for i in range(positions):
-        #print(positions)
+    for i in range(0, L - k + 1, step):
+
         kmer = seq[i:i+k]
 
         if kmer not in pos_prob.index:
-            vec[i] = 0.0
+            idx += 1
             continue
-        #print(f"pos_{i},kmer:{kmer},{pos_prob.loc[kmer,f'pos_{i}']}")
-    
-        p_pos = pos_prob.loc[kmer, f"pos_{i}"]
-        p_neg = neg_prob.loc[kmer, f"pos_{i}"]
-        #print(f'pos0 and first kmer in posi:{pos_prob.loc['AAA','pos_0']}')
-        #print(f'pos_{i}, kmer: {kmer},pos_prob{p_pos}, neg_prob{p_neg}')
 
-        # LLR
-        vec[i] = np.log((p_pos + eps) / (p_neg + eps))
+        p_pos = pos_prob.loc[kmer, f"pos_{idx}"]
+    
+        p_neg = neg_prob.loc[kmer, f"pos_{idx}"]
+
+        vec[idx] = np.log((p_pos + eps) / (p_neg + eps))
+        idx += 1
 
     return vec
 
@@ -191,16 +208,33 @@ def encode_sequences(pos_file, neg_file, kmer_to_index, cnn_len, hdv_len, pos_pr
         seq_cnn = seq
         if len(seq_cnn) < cnn_len:
             seq_cnn = seq_cnn + "N" * (cnn_len - len(seq_cnn))
+            
         else:
             seq_cnn = seq_cnn[:cnn_len]
 
-        kmers = get_overlapping_kmers(seq_cnn, K)
+        if kmertype=="overlap":
+            kmers = get_overlapping_kmers(seq_cnn, K)
+        else:
+            kmers= get_disjoint_kmers(seq_cnn,K)
+        #print(kmers)
         X.append(weighted_one_hot_kmers(kmers, kmer_to_index))
+        #print(X)
 
         # ===== HDV sequence (TRUNCATE to min_len) =====
-        seq_hdv = seq[:hdv_len]
+        '''seq_hdv = seq[:hdv_len]
         h = soft_decision_vector_llr(seq_hdv, pos_prob, neg_prob, K)
+        H.append(h)'''
+        seq_hdv = seq[:hdv_len]
+
+        if DECISION_TYPE == "soft_llr":
+            h = soft_decision_vector_llr(seq_hdv, pos_prob, neg_prob, K,kmertype)
+        elif DECISION_TYPE == "hard":
+            h = hard_decision_vector(seq_hdv, pos_prob, neg_prob, K,kmertype)
+        else:
+            raise ValueError("Unknown decision type")
+
         H.append(h)
+
 
         y.append(1 if sid in pos else 0)
         ids.append(sid)
@@ -212,9 +246,9 @@ def encode_sequences(pos_file, neg_file, kmer_to_index, cnn_len, hdv_len, pos_pr
 # ============================================================
 class KmerDataset(Dataset):
     def __init__(self, X, H, y):
-        self.X = torch.tensor(X, dtype=torch.float32).unsqueeze(1)
-        #H = np.array(H, dtype=np.float32)
-        H = np.tanh(H)
+        self.X = torch.tensor(X, dtype=torch.float32)
+        print(self.X)
+    
         self.H = torch.tensor(H, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.long)
 
@@ -224,49 +258,56 @@ class KmerDataset(Dataset):
     def __getitem__(self, idx):
         return self.X[idx], self.H[idx], self.y[idx]
 
-
-
 def get_model_architecture(input_shape, hdv_len):
-    model = KmerCNN(input_shape, hdv_len)
+    num_kmers = input_shape[0]
+    seq_len = input_shape[1]
+    model = KmerCNN(num_kmers, seq_len, hdv_len)
     return str(model)
-'''def get_model_architecture(input_shape):
-    num_kmers, seq_len = input_shape
-    model = KmerCNN(seq_len, num_kmers)
-    return str(model)'''
+
 
 # ============================================================
 # CNN MODEL
 # ============================================================
-class KmerCNN(nn.Module):
+'''class KmerCNN(nn.Module):
     def __init__(self, input_shape, hdv_len):
         super().__init__()
 
-        self.conv1 = nn.Conv2d(1, 32, 5, stride=2,padding=2)
-        self.conv2 = nn.Conv2d(32, 64, 3, stride=2, padding=1)
-        self.bn1 = nn.BatchNorm2d(32)
-        self.bn2 = nn.BatchNorm2d(64)
+        self.conv1 = nn.Conv2d(1, 32, 5, stride=1,padding=2)
+        self.conv2 = nn.Conv2d(32, 64, 3, stride=1, padding=1)
+        #self.bn1 = nn.GroupNorm(8, 32)
+        #self.bn2 = nn.GroupNorm(8, 64)
+        #self.bn1 = nn.BatchNorm2d(64)
+        #self.bn2 = nn.BatchNorm2d(128)
         #self.bn1 = nn.BatchNorm1d(128)
         #self.bn2 = nn.BatchNorm1d(32)
 
-        #self.pool = nn.MaxPool2d(3)
+        self.pool = nn.MaxPool2d((1, 2))  # only pool along sequence axis
         self.dropout = nn.Dropout(DROPOUT)
+
+        #self.conv_h = nn.Sequential(
+    #nn.Conv1d(1, 32, kernel_size=3, padding=1),
+    #nn.GroupNorm(8, 32),
+    #nn.ReLU(),
+    #nn.AdaptiveMaxPool1d(1)
+        )
 
         with torch.no_grad():
             dummy = torch.zeros(1,1,*input_shape)
-            x = F.relu(self.bn1(self.conv1(dummy)))
+            #x = F.relu(self.bn1(self.conv1(dummy)))
             #x = self.pool(F.relu(self.bn1(self.conv1(dummy))))
-            #x = self.pool(F.relu(self.conv1(dummy)))
-            #x = self.pool(F.relu(self.conv2(x)))
             #x = self.pool(F.relu(self.bn2(self.conv2(x))))
-            x = F.relu(self.bn2(self.conv2(x)))
+            x = self.pool(F.relu(self.conv1(dummy)))
+            x = self.pool(F.relu(self.conv2(x)))
+            #x = F.relu(self.bn2(self.conv2(x)))
             self.flat = x.view(1,-1).shape[1]
 
         # ===== DENSE LAYERS =====
-        self.fc1 = nn.Linear(self.flat + 128, 128)
-        self.fc2 = nn.Linear(128, 32) 
-        self.fc_h = nn.Sequential(nn.Linear(hdv_len, 128), nn.BatchNorm1d(128),nn.ReLU())
+        self.fc1 = nn.Linear(self.flat + hdv_len, 48)
+        self.fc2 = nn.Linear(48, 16) 
+        #self.fc_h = nn.Sequential(nn.Linear(hdv_len, 128), nn.BatchNorm1d(128),nn.ReLU())
+        
      # NEW LAYER
-        self.fc3 = nn.Linear(32, 2)        # FINAL OUTPUT
+        self.fc3 = nn.Linear(16, 2)        # FINAL OUTPUT
         #self.fc_h = nn.Linear(hdv_len, 96)
 
     def forward(self, x,h):
@@ -274,13 +315,22 @@ class KmerCNN(nn.Module):
 
         #x = self.pool(F.relu(self.bn1(self.conv1(x))))
         #x = self.pool(F.relu(self.bn2(self.conv2(x))))
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        #x = self.pool(F.relu(self.conv1(x)))
-        #x = self.pool(F.relu(self.conv2(x)))
+        #x = F.relu(self.bn1(self.conv1(x)))
+        #x = F.relu(self.bn2(self.conv2(x)))
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
 
         x = torch.flatten(x, 1)
-        h = self.fc_h(h)
+        #h = self.fc_h(h)
+
+        #gate = self.h_gate(h)
+        #h = h * gate
+        #h = self.h_proj(h)
+        #h = h.unsqueeze(1)          # [B, 1, hdv_len]
+        #h = self.conv_h(h)
+        #h = h.squeeze(-1)          # [B, 32]
+        
+
 
         x = torch.cat([x, h], dim=1)
         
@@ -289,16 +339,17 @@ class KmerCNN(nn.Module):
         #x = self.dropout(F.relu(self.bn1(self.fc1(x))))
         #x = self.dropout(F.relu(self.bn2(self.fc2(x))))
 
-        return self.fc3(x)
+        return self.fc3(x)'''
 
-'''class KmerCNN(nn.Module):
-    def __init__(self, seq_len, num_kmers):
+class KmerCNN(nn.Module):
+    def __init__(self, num_kmers, seq_len, hdv_len, dropout):
         super().__init__()
+        print(f"Number of kmers:{num_kmers}")
 
         self.conv1 = nn.Conv1d(
             in_channels=num_kmers,
             out_channels=32,
-            kernel_size=7,
+            kernel_size=5,
             padding=2
         )
 
@@ -311,22 +362,31 @@ class KmerCNN(nn.Module):
 
         self.pool = nn.MaxPool1d(2)
         self.relu = nn.ReLU()
-        #self.dropout = nn.Dropout(DROPOUT)
+        self.dropout = nn.Dropout(dropout)
+
         # infer size automatically
         with torch.no_grad():
             dummy = torch.zeros(1, num_kmers, seq_len)
             dummy = self.pool(self.relu(self.conv1(dummy)))
             dummy = self.relu(self.conv2(dummy))
-            fc_in = dummy.numel()
+            flat_dim = dummy.numel()
 
-        self.fc = nn.Linear(fc_in, 2)
+        self.fc1 = nn.Linear(flat_dim + hdv_len, 48)
+        self.fc2 = nn.Linear(48, 16)
+        self.fc3 = nn.Linear(16, 2)
 
-    def forward(self, x):
+    def forward(self, x,h):
         # x: B × num_kmers × positions
         x = self.pool(self.relu(self.conv1(x)))
         x = self.relu(self.conv2(x))
         x = x.flatten(1)
-        return self.fc(x)'''
+
+        # fusion
+        x = torch.cat([x, h], dim=1)
+
+        x = self.dropout(self.relu(self.fc1(x)))
+        x = self.dropout(self.relu(self.fc2(x)))
+        return self.fc3(x)
 
 # ============================================================
 # TRAIN / EVAL
@@ -366,8 +426,12 @@ class KmerCNN(nn.Module):
 
     return evaluate(val_loader), evaluate(test_loader)
 '''
-def train_and_eval(train_X, train_H, train_y, train_ids,
-                   test_X, test_H, test_y):
+def train_and_eval(
+    train_X, train_H, train_y, train_ids,
+    test_X, test_H, test_y,
+    lr, weight_decay, dropout, label_smoothing
+):
+
 
 
     X_tr, X_val, H_tr, H_val, y_tr, y_val, ids_tr, ids_val = train_test_split(
@@ -380,8 +444,10 @@ def train_and_eval(train_X, train_H, train_y, train_ids,
         random_state=42
     )
 
-
+    
     train_loader = DataLoader(KmerDataset(X_tr, H_tr, y_tr), BATCH_SIZE, shuffle=True)
+    print(train_loader)
+
     val_loader   = DataLoader(KmerDataset(X_val, H_val, y_val), BATCH_SIZE)
     test_loader  = DataLoader(KmerDataset(test_X, test_H, test_y), BATCH_SIZE)
 
@@ -392,21 +458,31 @@ def train_and_eval(train_X, train_H, train_y, train_ids,
 
     print(f"Train samples: {len(y_tr)}, Val samples: {len(y_val)}, Test samples: {len(test_y)}")
 
-    #num_kmers = train_X.shape[1]
-    #seq_len   = train_X.shape[2]
-    #print(f"Number of kmers: {num_kmers}, Sequence length: {seq_len}")
+    num_kmers = train_X.shape[1]
+    seq_len   = train_X.shape[2]
+    print(f"Number of kmers: {num_kmers}, Sequence length: {seq_len}")
 
-    #model = KmerCNN(seq_len, num_kmers).to(DEVICE)
+    
     hdv_len = train_H.shape[1]
-    model = KmerCNN(train_X.shape[1:], hdv_len).to(DEVICE)
+    print(hdv_len)
+    model = KmerCNN(num_kmers, seq_len, hdv_len, dropout).to(DEVICE)
+    #model = KmerCNN(train_X.shape[1:], hdv_len).to(DEVICE)
 
-    opt = torch.optim.Adam(model.parameters(), lr=LR,weight_decay=1e-4)
-    crit = nn.CrossEntropyLoss()
+    opt = torch.optim.Adam(
+    model.parameters(),
+    lr=lr,
+    weight_decay=weight_decay
+)
+
+    crit = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+
+    #crit = nn.CrossEntropyLoss(label_smoothing=0.03)
 
     train_losses, val_losses = [], []
 
     best_val = float("inf")
-    patience = 5
+    patience = PATIENCE
+    min_delta = MIN_DELTA
     counter = 0
 
     for epoch in range(EPOCHS):
@@ -439,7 +515,7 @@ def train_and_eval(train_X, train_H, train_y, train_ids,
         val_losses.append(val_loss)
 
         # ===== EARLY STOPPING =====
-        if val_loss < best_val - 1e-4:
+        if val_loss < best_val - min_delta:
             best_val = val_loss
             counter = 0
             torch.save(model.state_dict(), f"{species}_model.pt")
@@ -449,15 +525,6 @@ def train_and_eval(train_X, train_H, train_y, train_ids,
         if counter >= patience:
             print(f"Early stopping at epoch {epoch}")
             break
-        np.savetxt(f"{RESULTS_DIR}/{species}_fold{fold}_train_ids.txt",
-        ids_tr,
-        fmt="%s")
-
-        np.savetxt(
-            f"{RESULTS_DIR}/{species}_fold{fold}_val_ids.txt",
-            ids_val,
-            fmt="%s"
-        )
 
 
     model.load_state_dict(torch.load(f"{species}_model.pt"))
@@ -472,6 +539,7 @@ def train_and_eval(train_X, train_H, train_y, train_ids,
             for xb, hb, yb in loader:
                 xb, hb = xb.to(DEVICE), hb.to(DEVICE)
                 out = model(xb, hb)
+                best_t = np.linspace(0.3, 0.7, 21)
 
                 p = torch.softmax(out, dim=1)[:,1].cpu().numpy()
 
@@ -542,38 +610,66 @@ if __name__ == "__main__":
 
         val_scores, test_scores = [], []
 
-        for fold in FOLDS:
-            print(f"\nFold {fold}")
+        best_params = None
+        best_val_auc = -1
 
-            base = f"Splits/{species}/fold{fold}"
-            print(species)
+        for lr, wd, dp, ls in product(
+            PARAM_GRID["lr"],
+            PARAM_GRID["weight_decay"],
+            PARAM_GRID["dropout"],
+            PARAM_GRID["label_smoothing"]
+        ):
+            fold_val_aucs = []
 
-            X_train, y_train, train_ids, H_train = encode_sequences(
-                f"{base}/train_pos.txt",
-                f"{base}/train_neg.txt",
-                kmer_to_index,
-                cnn_len,
-                hdv_len,
-                POS_PROB,
-                NEG_PROB
-            )
-            print(H_train)
+            print(f"\nTesting params: lr={lr}, wd={wd}, dropout={dp}, ls={ls}")
 
-            X_test, y_test, test_ids, H_test = encode_sequences(
-                f"{base}/test_pos.txt",
-                f"{base}/test_neg.txt",
-                kmer_to_index,
-                cnn_len,
-                hdv_len,
-                POS_PROB,
-                NEG_PROB
-            )
+            for fold in FOLDS:
+                base = f"Splits/{species}/fold{fold}"
 
-            val_metrics, test_metrics, train_losses, val_losses = train_and_eval(X_train, H_train, y_train, train_ids,X_test,  H_test,  y_test)
+                X_train, y_train, train_ids, H_train = encode_sequences(
+                    f"{base}/train_pos.txt",
+                    f"{base}/train_neg.txt",
+                    kmer_to_index,
+                    cnn_len,
+                    hdv_len,
+                    POS_PROB,
+                    NEG_PROB
+                )
 
-            import json
+                X_test, y_test, test_ids, H_test = encode_sequences(
+                    f"{base}/test_pos.txt",
+                    f"{base}/test_neg.txt",
+                    kmer_to_index,
+                    cnn_len,
+                    hdv_len,
+                    POS_PROB,
+                    NEG_PROB
+                )
 
-            run_result = {
+                val_metrics, _, _, _ = train_and_eval(
+                    X_train, H_train, y_train, train_ids,
+                    X_test, H_test, y_test,
+                    lr, wd, dp, ls
+                )
+
+                fold_val_aucs.append(val_metrics["auc"])
+
+            mean_val_auc = np.mean(fold_val_aucs)
+
+            if mean_val_auc > best_val_auc:
+                best_val_auc = mean_val_auc
+                best_params = {
+                    "lr": lr,
+                     "weight_decay": wd,
+                    "dropout": dp,
+                    "label_smoothing": ls
+                }
+            print(f"\nBEST params for {species}: {best_params}")
+
+
+        import json
+
+        run_result = {
                 "species": species,
                 "fold": fold,
                 "K": K,
@@ -586,25 +682,31 @@ if __name__ == "__main__":
                 "train_loss": train_losses,
                 "val_loss": val_losses,
                 "dropout": DROPOUT,
-            }
+                "kmertype": kmertype,
+                "decision type":DECISION_TYPE,
+                "Specie":SPECIES,
+                "patience": PATIENCE,
+                "min_delta":MIN_DELTA,
+                'weight_decay':WEIGHT_DECAY,
+        }
 
-            out_file = f"{RESULTS_DIR}/{species}_fold{fold}_K{K}_len{max_len}.json"
+        out_file = f"{RESULTS_DIR}/{species}_fold{fold}_K{K}_len{max_len}.json"
 
-            with open(out_file, "w") as f:
+        with open(out_file, "w") as f:
                 json.dump(run_result, f, indent=4)
 
 
 
-            val_scores.append(val_metrics["acc"])
-            test_scores.append(test_metrics["acc"])
-            arch_txt = get_model_architecture(X_train.shape[1:],H_train.shape[1])
+        val_scores.append(val_metrics["acc"])
+        test_scores.append(test_metrics["acc"])
+        arch_txt = get_model_architecture(X_train.shape[1:],H_train.shape[1])
 
-            with open(f"{RESULTS_DIR}/{species}_K{K}_architecture.txt", "w") as f:
+        with open(f"{RESULTS_DIR}/{species}_K{K}_architecture.txt", "w") as f:
                 f.write(arch_txt)
  
 
-            print(f"Validation Acc: {val_metrics['acc']:.4f}")
-            print(f"Test Acc:       {test_metrics['acc']:.4f}")
+        print(f"Validation Acc: {val_metrics['acc']:.4f}")
+        print(f"Test Acc:       {test_metrics['acc']:.4f}")
         print(f"\n{species} Mean Val Acc : {np.mean(val_scores):.4f}")
         print(f"{species} Mean Test Acc: {np.mean(test_scores):.4f}")
     
@@ -615,6 +717,7 @@ if __name__ == "__main__":
             "K": K,
             "num_kmers": len(valid_kmers),
             "kmers": valid_kmers,
-            "kmer_to_index": kmer_to_index
+            "kmer_to_index": kmer_to_index,
+            'mean_test_accuracy':f"{np.mean(test_scores):.4f}",
         }, f, indent=4)
 

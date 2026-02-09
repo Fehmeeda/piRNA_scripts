@@ -49,7 +49,8 @@ def read_fasta_or_txt(filepath):
 # =============================
 def majority_length(seqs):
     return Counter(len(s) for s in seqs).most_common(1)[0][0]
-
+def min_length(sequences):
+    return min(len(s) for s in sequences)
 # =============================
 # KMER SETUP
 # =============================
@@ -128,15 +129,15 @@ def main():
         pos_seqs = read_fasta_or_txt(pos_file)
         neg_seqs = read_fasta_or_txt(neg_file)
 
-        # ---- Length decision ----
+        '''# ---- Length decision ----
         if species == "Drosophila":
-            target_len = majority_length(neg_seqs)
-            rule = "majority NEGATIVE"
-        else:
-            target_len = majority_length(pos_seqs)
-            rule = "majority POSITIVE"
+            target_len = min_length(neg_seqs)
+            rule = "mini NEGATIVE"
+        else:'''
+        target_len = min_length(pos_seqs)
+        #rule = "mini POSITIVE"
 
-        print(f"📏 Target length: {target_len} ({rule})")
+        #print(f"📏 Target length: {target_len} ({rule})")
 
         pos_seqs = [s[:target_len] for s in pos_seqs if len(s) >= target_len]
         neg_seqs = [s[:target_len] for s in neg_seqs if len(s) >= target_len]

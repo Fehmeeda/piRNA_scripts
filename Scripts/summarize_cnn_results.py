@@ -1,13 +1,14 @@
 import json, glob
 import numpy as np
 
-files = glob.glob("results_cnn/*.json")
+files = glob.glob("results_cnn_1d_19/*.json")
 
-for species in ["Human","Mouse","Drosophila"]:
+for species in ["Drosophila"]:
     accs = []
     aucs = []
     precison = []
     recall = []
+
 
     for f in files:
         if species in f:
@@ -16,6 +17,7 @@ for species in ["Human","Mouse","Drosophila"]:
             aucs.append(d["test"]["auc"])
             precison.append(d["test"]["precision"])
             recall.append(d["test"]["recall"])
+
 
 
     print(f"{species}: ACC={np.mean(accs):.4f}, AUC={np.mean(aucs):.4f}, PRECISION={np.mean(precison):.4f}, RECALL={np.mean(recall):.4f}")

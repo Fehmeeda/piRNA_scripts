@@ -187,7 +187,7 @@ def get_disjoint_kmers(seq, k=3):
     return kmers
 
 
-def generate_valid_kmers(k=3, alphabet="ACGTN"):
+def generate_valid_kmers(k=3, alphabet="ACGT"):
     all_kmers = ["".join(p) for p in product(alphabet, repeat=k)]
     valid = []
 
@@ -264,8 +264,8 @@ class KmerCNN(nn.Module):
     def __init__(self, input_shape):
         super().__init__()
 
-        self.conv1 = nn.Conv2d(1, 32, (5,3), padding=(2,1))
-        self.conv2 = nn.Conv2d(32, 64, 3, padding=1)
+        self.conv1 = nn.Conv2d(1, 16, 5, padding=(2,1))
+        self.conv2 = nn.Conv2d(16, 32, 3, padding=1)
         self.pool = nn.MaxPool2d(2)
         self.dropout = nn.Dropout(0.3)
 

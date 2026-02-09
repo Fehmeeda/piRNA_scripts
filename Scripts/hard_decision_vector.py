@@ -293,6 +293,7 @@ def kmer_freq_overlap(sequences, target_len):
             kmer = seq[i:i + K]
             if set(kmer) <= set(ALPHABET):
                 mat[i, KMER_TO_IDX[kmer]] += 1
+    
 
     return mat
 
@@ -312,6 +313,7 @@ def save_kmer_position_table(matrix, outfile):
 # NORMALIZATION
 # =============================
 def column_wise_normalize(df):
+    print(df.div(df.sum(axis=0) + 1e-12, axis=1))
     return df.div(df.sum(axis=0) + 1e-12, axis=1)
 
 # =============================
