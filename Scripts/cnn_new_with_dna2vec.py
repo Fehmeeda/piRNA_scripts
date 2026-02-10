@@ -194,14 +194,15 @@ class KmerDataset(Dataset):
         self.X_oh = torch.tensor(X_oh, dtype=torch.float32).unsqueeze(1)
         self.X_d2v = torch.tensor(X_d2v, dtype=torch.float32).unsqueeze(1)
         self.y = torch.tensor(y, dtype=torch.long)
-        self.mask = (self.X_d2v.abs().sum(dim=-1) > 0).float()
+        #self.mask = (self.X_d2v.abs().sum(dim=-1) > 0).float()
 # shape: (B, 1, L)
 
     def __len__(self):
         return len(self.y)
 
     def __getitem__(self, idx):
-        return self.X_oh[idx], self.X_d2v[idx], self.mask[idx], self.y[idx]
+        return self.X_oh[idx], self.X_d2v[idx], self.y[idx]
+        #eturn self.X_oh[idx], self.X_d2v[idx], self.mask[idx], self.y[idx]
 
 def get_model_architecture(oh_shape, d2v_shape):
     model = KmerCNN(oh_shape, d2v_shape)
@@ -247,17 +248,18 @@ class KmerCNN(nn.Module):
         self.fc2 = nn.Linear(64, 2)
         
 
-    def forward(self, x_oh, x_d2v, mask):
+    def forward(self, x_oh, x_d2v):
 
         x_oh = F.relu(self.conv_oh1(x_oh))
         x_oh = self.pool(x_oh)
         x_oh = F.relu(self.conv_oh2(x_oh))
         x_oh = self.pool(x_oh)
         x_oh = x_oh.flatten(1)
+        x_oh = F.normalize(x_oh, p=2, dim=1)
 
          # ---- dna2vec branch ----
-        mask = mask.unsqueeze(-1)      # (B,1,L,1)
-        x_d2v = x_d2v * mask
+        '''mask = mask.unsqueeze(-1)      # (B,1,L,1)
+        x_d2v = x_d2v * mask'''
 
         x_d2v = F.relu(self.conv_d1(x_d2v))
         x_d2v = self.pool(x_d2v)
@@ -265,6 +267,7 @@ class KmerCNN(nn.Module):
         x_d2v = self.pool(x_d2v)
         
         x_d2v = x_d2v.flatten(1)
+        x_d2v = F.normalize(x_d2v, p=2, dim=1)
 
         x = torch.cat([x_oh, x_d2v], dim=1)
         x = self.dropout(F.relu(self.fc1(x)))
@@ -347,13 +350,13 @@ def train_and_eval(train_X, train_D, train_y, train_ids,
         model.train()
         epoch_loss = 0
 
-        for xb, db, mask, yb in train_loader:
+        for xb, db, yb in train_loader:
             xb = xb.to(DEVICE)
             db = db.to(DEVICE)
-            mask = mask.to(DEVICE)
+           
             yb = yb.to(DEVICE)
 
-            out = model(xb, db, mask)
+            out = model(xb, db)
             loss = crit(out, yb)
 
             opt.zero_grad()
@@ -367,13 +370,13 @@ def train_and_eval(train_X, train_D, train_y, train_ids,
         model.eval()
         val_loss = 0
         with torch.no_grad():
-            for xb, db, mask, yb in val_loader:
+            for xb, db, yb in val_loader:
                 xb = xb.to(DEVICE)
                 db = db.to(DEVICE)
-                mask = mask.to(DEVICE)
+                
                 yb = yb.to(DEVICE)
 
-                val_loss += crit(model(xb, db, mask), yb).item()
+                val_loss += crit(model(xb, db), yb).item()
 
 
 
@@ -411,12 +414,12 @@ def train_and_eval(train_X, train_D, train_y, train_ids,
         probs, preds, true = [], [], []
 
         with torch.no_grad():
-            for xb, db, mask, yb in loader:
+            for xb, db, yb in loader:
                 xb = xb.to(DEVICE)
                 db = db.to(DEVICE)
-                mask = mask.to(DEVICE)
+                
 
-                out = model(xb, db, mask)
+                out = model(xb, db)
                 p = torch.softmax(out, dim=1)[:, 1].cpu().numpy()
 
                 probs.extend(p)
@@ -437,7 +440,7 @@ def train_and_eval(train_X, train_D, train_y, train_ids,
         train_losses,
         val_losses
     )
-RESULTS_DIR = "results_cnn"
+RESULTS_DIR = "results_cnn_dna_2_vec"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 
