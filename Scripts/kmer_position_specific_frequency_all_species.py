@@ -17,7 +17,7 @@ SPECIES = {
     "Drosophila":   ("Datasets/Drosophila_posi_samples.txt",   "Datasets/Drosophila_nega_samples.txt"),
 }
 
-OUT_DIR = "output_position_kmer_frequency"
+OUT_DIR = "output_position_kmer_frequency_old_one_that i showed to professor"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 # =============================

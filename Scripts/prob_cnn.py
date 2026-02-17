@@ -9,8 +9,8 @@ import os
 # CONFIG
 # =========================
 K = 3
-KMERTYPE = "disjoint"   # overlap | disjoint
-DECISION_TYPE = "soft" # soft | hard
+KMERTYPE = "overlap"   # overlap | disjoint
+#DECISION_TYPE = "soft" # soft | hard
 SPECIES = ["Human","Mouse","Drosophila"]
 FOLDS = range(5)
 OUTDIR = "output_position_kmer_probabilities"
@@ -40,7 +40,7 @@ def majority_length(seqs):
 # =========================
 # BUILD PROB MATRIX
 # =========================
-def build_prob_matrix(seqs, k, kmertype, decision_type, L):
+'''def build_prob_matrix(seqs, k, kmertype, decision_type, L):
     """
     L = fixed majority length across all folds for this species
     """
@@ -69,12 +69,13 @@ def build_prob_matrix(seqs, k, kmertype, decision_type, L):
                 continue
             counts[kmer_to_idx[kmer], pos] += 1
 
-    # Column-wise normalization (P(kmer | position))
+    Column-wise normalization (P(kmer | position))
     col_sums = counts.sum(axis=0, keepdims=True)
     col_sums[col_sums == 0] = 1
     probs = counts / col_sums
+    
 
-    # Row-wise normalization (optional)
+    Row-wise normalization (optional)
     row_sums = probs.sum(axis=1, keepdims=True)
     row_sums[row_sums == 0] = 1
     probs = probs / row_sums
@@ -85,7 +86,47 @@ def build_prob_matrix(seqs, k, kmertype, decision_type, L):
         columns=[f"pos_{i}" for i in range(positions)]
     )
     return df
+'''
+def build_prob_matrix(seqs, k, kmertype, L):
+    kmers = generate_kmers(k)
+    kmer_to_idx = {k: i for i, k in enumerate(kmers)}
+    
 
+    step = 1 if kmertype == "overlap" else k
+    positions = (L - k) // step + 1
+    
+
+    counts = np.zeros((len(kmers), positions), dtype=np.float32)
+
+    for seq in seqs:
+        seq_len = len(seq)
+        
+
+        for pos in range(positions):
+            start = pos * step
+            end = start + k
+           
+
+            # -----------------------------
+            # CASE 1: sequence HAS this kmer
+            # -----------------------------
+            if end <= seq_len:
+                kmer = seq[start:end]
+                if kmer in kmer_to_idx:
+                    counts[kmer_to_idx[kmer], pos] += 1
+
+
+    # Normalize column-wise
+    col_sums = counts.sum(axis=0, keepdims=True)
+    #col_sums[col_sums == 0] = 1  # safety
+    probs = counts / col_sums
+
+    df = pd.DataFrame(
+        probs,
+        index=kmers,
+        columns=[f"pos_{i}" for i in range(positions)]
+    )
+    return df
 # =========================
 # MAIN
 # =========================
@@ -105,6 +146,9 @@ for species in SPECIES:
     # 🔑 Majority length across all folds, both pos & neg
     MAJ_LENGTH = majority_length(all_seqs)
     print(f"  Majority length for {species} = {MAJ_LENGTH}")
+    # 🔑 Minimum length across all sequences (pos + neg)
+    MIN_LENGTH = min(len(s) for s in all_seqs)
+    print(f"  Minimum length for {species} = {MIN_LENGTH}")
 
     # ===== BUILD PROB MATRIX FOR EACH FOLD =====
     for fold in FOLDS:
@@ -112,14 +156,14 @@ for species in SPECIES:
         pos = read_fasta_txt(f"{base}/train_pos.txt")
         neg = read_fasta_txt(f"{base}/train_neg.txt")
 
-        pos_df = build_prob_matrix(list(pos.values()), K, KMERTYPE, DECISION_TYPE, MAJ_LENGTH)
-        neg_df = build_prob_matrix(list(neg.values()), K, KMERTYPE, DECISION_TYPE, MAJ_LENGTH)
+        pos_df = build_prob_matrix(list(pos.values()), K, KMERTYPE, MIN_LENGTH)
+        neg_df = build_prob_matrix(list(neg.values()), K, KMERTYPE, MIN_LENGTH)
 
-        pos_out = f"{OUTDIR}/{species}_fold{fold}_pos_{KMERTYPE}_{DECISION_TYPE}_prob.csv"
-        neg_out = f"{OUTDIR}/{species}_fold{fold}_neg_{KMERTYPE}_{DECISION_TYPE}_prob.csv"
+        pos_out = f"{OUTDIR}/{species}_fold{fold}_pos_{KMERTYPE}_prob.csv"
+        neg_out = f"{OUTDIR}/{species}_fold{fold}_neg_{KMERTYPE}_prob.csv"
 
         pos_df.to_csv(pos_out)
         neg_df.to_csv(neg_out)
 
-        print(f"    Saved: {os.path.basename(pos_out)}")
-        print(f"    Saved: {os.path.basename(neg_out)}")
+        print(f"  Saved: {os.path.basename(pos_out)}")
+        print(f"  Saved: {os.path.basename(neg_out)}")

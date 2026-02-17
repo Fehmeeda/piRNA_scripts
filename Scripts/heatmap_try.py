@@ -205,7 +205,7 @@ import os
 POS_COLOR = "#1f77b4"   # blue
 NEG_COLOR = "#d62728"   # red
 
-BASE_DIR = "output_position_kmer_frequency"
+BASE_DIR = "output_position_kmer_frequency_old_one_that i showed to professor"
 FIG_DIR = "heatmaps"
 os.makedirs(FIG_DIR, exist_ok=True)
 

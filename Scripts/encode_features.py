@@ -10,7 +10,7 @@ K = 3
 SPECIES = ["Human", "Mouse", "Drosophila"]
 FOLDS = range(5)
 OUTDIR = "encoded_features"
-kmertype="overlap" #disjoint
+kmertype = "overlap" # disjoint | overlap
 os.makedirs(OUTDIR, exist_ok=True)
 
 # ===============================
@@ -19,6 +19,7 @@ os.makedirs(OUTDIR, exist_ok=True)
 dna2vec_data = np.load("all_3mer_embeddings_with_null.npz")
 DNA2VEC_EMB = dna2vec_data["embeddings"]
 
+
 # =========================
 # KMER UTILS (SAME AS CNN)
 # =========================
@@ -26,9 +27,10 @@ def get_kmers(seq, k, kmertype):
     if kmertype == "overlap":
         return [seq[i:i+k] for i in range(len(seq) - k + 1)]
     else:
-        return [seq[i:i+k] for i in range(0, len(seq) - k + 1, k)]
+        return [seq[i:i+k] for i in range(0, len(seq) - k + 1, k)] 
+    
 #To include N kmers Just add N in alphabet, If N is not in the alphabet even the NNN is not counted as a valid kmer and have 0's vector instead
-def generate_valid_kmers(k=3, alphabet="ACGT"):
+def generate_valid_kmers(k=3, alphabet="ACGTN"):
     all_kmers = ["".join(p) for p in product(alphabet, repeat=k)]
     valid = []
 
@@ -89,18 +91,28 @@ def weighted_one_hot_kmers(kmer_list, kmer_to_index, weights={0:1.0,1:0.5,2:0.25
 
 def dna2vec_sequence_matrix(seq, k, kmer_to_index):
     kmers = get_kmers(seq, k, kmertype)
-    vecs = []
-
+    emb_list = []
     for kmer in kmers:
-        idx = kmer_to_index.get(kmer, 0)
-        vecs.append(DNA2VEC_EMB[idx])
+        if "N" in kmer or kmer not in kmer_to_index:
+            idx = 0
+        else:
+            idx = kmer_to_index[kmer]
+        emb_list.append(DNA2VEC_EMB[idx])
+    return np.array(emb_list, dtype=np.float32)   # shape = (#kmers, 100)
 
-    return np.array(vecs, dtype=np.float32)
+def build_kmer_dict(K):
+    bases = ["A","C","G","T"]
+    kmers = ["".join(p) for p in product(bases, repeat=K)]
+    kmer_to_index = {"NULL": 0}
+    for i, kmer in enumerate(kmers, start=1):
+        kmer_to_index[kmer] = i
+    return kmer_to_index
+
 
 # =========================
 # ENCODING FUNCTION
 # =========================
-def encode_split(pos_file, neg_file, kmer_to_index, cnn_len):
+def encode_split(pos_file, neg_file, kmer_to_index, kmer_to_index_for_dna2vec, cnn_len):
     pos = read_fasta_txt(pos_file)
     neg = read_fasta_txt(neg_file)
 
@@ -109,9 +121,9 @@ def encode_split(pos_file, neg_file, kmer_to_index, cnn_len):
     for sid, seq in {**pos, **neg}.items():
         seq = seq[:cnn_len].ljust(cnn_len, "N")
         kmers = get_kmers(seq, K, kmertype)
-
+        
         X_oh.append(weighted_one_hot_kmers(kmers, kmer_to_index))
-        X_d2v.append(dna2vec_sequence_matrix(seq, K, kmer_to_index))
+        X_d2v.append(dna2vec_sequence_matrix(seq, K, kmer_to_index_for_dna2vec))
         y.append(1 if sid in pos else 0)
         ids.append(sid)
 
@@ -129,6 +141,7 @@ if __name__ == "__main__":
 
     valid_kmers = generate_valid_kmers(K)
     kmer_to_index = {k:i for i,k in enumerate(valid_kmers)}
+    kmer_to_index_for_dna2vec = build_kmer_dict(K)
 
     for species in SPECIES:
         print(f"\nProcessing {species}")
@@ -152,6 +165,7 @@ if __name__ == "__main__":
                 f"{base}/train_pos.txt",
                 f"{base}/train_neg.txt",
                 kmer_to_index,
+                kmer_to_index_for_dna2vec,
                 cnn_len
             )
 
@@ -159,6 +173,7 @@ if __name__ == "__main__":
                 f"{base}/test_pos.txt",
                 f"{base}/test_neg.txt",
                 kmer_to_index,
+                kmer_to_index_for_dna2vec,
                 cnn_len
             )
 
@@ -177,5 +192,10 @@ if __name__ == "__main__":
                 y=yte,
                 ids=idte
             )
+            print("Weighted one-hot shape:", Xtr_oh.shape)   # should be (num_samples, num_kmers, cnn_len)
+            print("dna2vec shape:", Xtr_d2v.shape)          # should be (num_samples, cnn_len, embedding_dim)
+            print("y shape:", ytr.shape)
+            print("First sequence weighted one-hot sum:", Xtr_oh[0].sum())
+            print("First sequence dna2vec first vector:", Xtr_d2v[0])  # check first 5 dims
 
             print("Saved features ✔")

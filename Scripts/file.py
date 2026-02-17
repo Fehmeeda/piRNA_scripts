@@ -116,6 +116,7 @@ handles, labels = ax.get_legend_handles_labels()
 fig.legend(handles, labels, loc='upper right')
 plt.tight_layout()
 plt.show()'''
+'''
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -183,4 +184,58 @@ for seed in random_seeds:
 
     print(f"Saved: {save_path}")
 
-print("\n✅ All t-SNE images saved in folder:", save_dir)
+print("\n✅ All t-SNE images saved in folder:", save_dir)'''
+import numpy as np
+from sklearn.metrics import confusion_matrix, accuracy_score
+from pirna import read_fasta_txt
+import os
+import pandas as pd
+
+SPECIES = ["Human","Drosophila"]
+FOLDS = range(5)
+HDV_DIR = "hdv_vectors"  # folder where HDVs are saved
+CSV_OUTDIR = "hdv_check_csv"
+os.makedirs(CSV_OUTDIR, exist_ok=True)
+
+for species in SPECIES:
+    print(f"\nChecking HDVs for {species}")
+
+    for fold in FOLDS:
+        for split in ["train", "test"]:
+            npz_file = f"{HDV_DIR}/{species}_fold{fold}_overlap_{split}_hdv.npz"
+            data = np.load(npz_file, allow_pickle=True)
+            
+            H_hard = data["H_hard"]
+            y_true = data["y"]
+            ids = data["ids"]
+
+            # Count 1s and 0s per sample
+            ones_per_sample = H_hard.sum(axis=1)
+            zeros_per_sample = H_hard.shape[1] - ones_per_sample
+            
+
+            # Hard prediction by majority vote
+            y_pred = (ones_per_sample >= zeros_per_sample).astype(int)
+
+            # Accuracy
+            accuracy = accuracy_score(y_true, y_pred)
+            print(f"  Fold {fold} | {split} | Accuracy = {accuracy:.4f}")
+
+            # Confusion matrix
+            cm = confusion_matrix(y_true, y_pred)
+            tn, fp, fn, tp = cm.ravel()
+            print("    Confusion Matrix:")
+            print(cm)
+            print(f"      TP={tp}, FP={fp}, TN={tn}, FN={fn}\n")
+
+            # Save HDV counts + prediction to CSV
+            df_out = pd.DataFrame({
+                "ID": ids,
+                "Label": y_true,
+                "Pred": y_pred,
+                "Ones": ones_per_sample,
+                "Zeros": zeros_per_sample
+            })
+            csv_file = f"{CSV_OUTDIR}/{species}_fold{fold}_{split}_hdv_counts.csv"
+            df_out.to_csv(csv_file, index=False)
+            print(f"    Saved counts & predictions → {csv_file}")

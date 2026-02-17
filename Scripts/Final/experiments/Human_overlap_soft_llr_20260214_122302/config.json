@@ -1,0 +1,10 @@
+{
+    "SPECIES": "Human",
+    "KMERTYPE": "overlap",
+    "DECISION_TYPE": "soft_llr",
+    "BATCH_SIZE": 32,
+    "EPOCHS": 30,
+    "LR": 0.001,
+    "DEVICE": "cpu",
+    "PATIENCE": 5
+}
